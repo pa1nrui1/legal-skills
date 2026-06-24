@@ -44,6 +44,7 @@ Legal Skills 是一套开源的中文法律工作 Skill 集合，目标不是提
 | **合同审查** | 新增 Word 红线稿执行层：用户要求修订模式时，先生成 `redline-plan.json`，再运行 `scripts/redline/apply_redline_plan.py` 输出带真实 `w:ins` / `w:del` 修订痕迹和批注的审核修订稿，并通过 `scripts/redline/qa_redline.py` 做结构 QA。 |
 | **合同审查修订策略** | 新增 `references/修订策略.md` 和 `references/redline-plan-protocol.md`，将“必须修改 / 建议修改 / 需客户确认 / 可优化”映射为 `replace / insert / delete / comment / report-only`，并固化审查人、上线期、原合同路径、正式审查意见路径和解析方式。 |
 | **文档与测试** | README 和 `CHANGELOG.md` 记录本轮更新；新增红线执行器单元测试，覆盖修订批注生成、重复文本定位失败、`occurrence` 精准命中和重大修订后批注控制。 |
+| **致谢** | 本轮红线执行链路参考了 [cat-xierluo/contract-copilot.skill](https://github.com/cat-xierluo/contract-copilot.skill) 的开源项目设计，感谢杨卫薪律师及该项目的开源启发。 |
 
 ### 2026-06-20
 
