@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -26,6 +28,10 @@ SKILL_DIR = Path(__file__).resolve().parents[1]
 PROFILES_DIR = SKILL_DIR / "assets" / "profiles"
 DEFAULT_PROFILE = "fallback_desktop_word"
 ALLOWED_PREFLIGHT_STATUS = {"PASS", "FIXED_PASS"}
+MATTER_ROOT = Path(os.environ.get("LEGAL_WORKSPACE", ".")).expanduser()
+SYSTEM_RECORD_ROOT = MATTER_ROOT / "_系统记录"
+DRAFT_OUTPUT_NAME_PATTERN = re.compile(r"draft|unchecked|草稿|实验|未审查|未出稿")
+INVALID_XML_CHARS_PATTERN = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
 
 @dataclass
@@ -61,11 +67,15 @@ class TreeBuilder(HTMLParser):
             self.stack[-1].text_parts.append(data)
 
 
+def sanitize_docx_text(text: str) -> str:
+    return INVALID_XML_CHARS_PATTERN.sub("", text)
+
+
 def text_of(node: Node) -> str:
     parts = list(node.text_parts)
     for child in node.children:
         parts.append(text_of(child))
-    return " ".join("".join(parts).split())
+    return sanitize_docx_text(" ".join("".join(parts).split()))
 
 
 def first_descendant(node: Node, tag: str) -> Node | None:
@@ -82,6 +92,21 @@ def document_children(root: Node) -> list[Node]:
     body = first_descendant(root, "body") or root
     article = first_descendant(body, "article")
     return article.children if article else body.children
+
+
+def has_nested_table(node: Node, in_table: bool = False) -> bool:
+    if node.tag == "table" and in_table:
+        return True
+    child_in_table = in_table or node.tag == "table"
+    return any(has_nested_table(child, child_in_table) for child in node.children)
+
+
+def validate_html_tree(root: Node) -> None:
+    title = first_descendant(root, "h1")
+    if title is None or not text_of(title):
+        raise ValueError("formal DOCX input requires non-empty h1 title")
+    if has_nested_table(root):
+        raise ValueError("nested table is not supported")
 
 
 def load_profile(name: str | None) -> dict:
@@ -333,10 +358,39 @@ def validate_preflight(input_path: Path, report_path: Path | None, allow_uncheck
         raise ValueError(f"preflight report status is not allowed: {status or 'missing'}")
 
 
+def is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def validate_output_path(output_path: Path, allow_unchecked: bool) -> None:
+    resolved = output_path.expanduser().resolve()
+    if resolved.suffix.lower() != ".docx":
+        raise ValueError("DOCX output path must end with .docx")
+
+    if allow_unchecked:
+        if is_relative_to(resolved, MATTER_ROOT):
+            raise ValueError("unchecked DOCX export must not write into formal business area")
+        return
+
+    if ".cache" in resolved.parts:
+        raise ValueError("formal DOCX output must not be under .cache")
+    if is_relative_to(resolved, SYSTEM_RECORD_ROOT):
+        raise ValueError("formal DOCX output must not be under system record root")
+    if not is_relative_to(resolved, MATTER_ROOT):
+        raise ValueError("formal DOCX output must be under business matter root")
+    if DRAFT_OUTPUT_NAME_PATTERN.search(resolved.name.lower()):
+        raise ValueError("formal DOCX filename must not look like draft or experiment")
+
+
 def convert(input_path: Path, output_path: Path, profile_name: str | None) -> Path:
     profile = load_profile(profile_name)
     parser = TreeBuilder()
     parser.feed(input_path.read_text(encoding="utf-8"))
+    validate_html_tree(parser.root)
     doc = Document()
     section = doc.sections[0]
     section.start_type = WD_SECTION.NEW_PAGE
@@ -388,6 +442,7 @@ def main() -> int:
     parser.add_argument("--check", action="store_true", help="Print structural checks after export.")
     args = parser.parse_args()
     validate_preflight(args.input, args.preflight_report, args.allow_unchecked)
+    validate_output_path(args.output, args.allow_unchecked)
     out = convert(args.input, args.output, args.profile)
     print(f"DOCX generated: {out}")
     if args.check:

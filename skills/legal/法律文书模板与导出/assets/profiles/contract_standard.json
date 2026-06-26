@@ -1,0 +1,39 @@
+{
+  "name": "contract_standard",
+  "version": "1.0",
+  "description": "通用合同正式文本：标题宋体三号，正文与主体信息小四，1.5倍行距。",
+  "page": {
+    "width_cm": 21.0,
+    "height_cm": 29.7,
+    "orientation": "portrait",
+    "margin_top_cm": 2.54,
+    "margin_bottom_cm": 2.54,
+    "margin_left_cm": 3.17,
+    "margin_right_cm": 3.17,
+    "header_distance_cm": 1.50,
+    "footer_distance_cm": 1.75
+  },
+  "fonts": {
+    "title": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 16, "bold": true},
+    "heading1": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 12, "bold": true},
+    "heading2": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 12, "bold": true},
+    "body": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 12, "bold": false},
+    "meta": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 12, "bold": false},
+    "table": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 10.5, "bold": false},
+    "footer": {"east_asia": "宋体", "ascii": "Times New Roman", "size_pt": 10.5, "bold": false}
+  },
+  "paragraph": {
+    "line_spacing_rule": "multiple",
+    "line_spacing": 1.5,
+    "first_line_indent_pt": 24,
+    "space_before_pt": 0,
+    "space_after_pt": 0
+  },
+  "table": {
+    "border_color": "000000",
+    "header_fill": "F2F2F2",
+    "cell_margin_twip": 120,
+    "line_spacing_pt": 20
+  },
+  "page_number": {"enabled": true, "text_before": "第 ", "text_after": " 页"}
+}

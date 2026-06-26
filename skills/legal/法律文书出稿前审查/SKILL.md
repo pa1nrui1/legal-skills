@@ -1,6 +1,6 @@
 ---
 name: 法律文书出稿前审查
-description: 在法律业务 Skill 生成正文后、法律文书模板与导出生成本地 Word 前触发。用于审查 draft.html、preflight-meta.json、读取复查摘要、法规校验摘要、来源边界和用户确认记录，决定是否可以进入正式 DOCX 导出；发现问题后必须闭环推进到业务 Skill 整改、用户确认或材料读取流程。
+description: 在法律业务 Skill 生成正文或要素式字段后、法律文书模板与导出生成本地 Word 前触发。用于审查 draft.html/preflight-meta.json 或 complaint-data.json/fill-plan.json、读取复查摘要、法规校验摘要、来源边界和用户确认记录，决定是否可以进入正式 DOCX 导出；发现问题后必须闭环推进到业务 Skill 整改、用户确认或材料读取流程。
 ---
 
 # 法律文书出稿前审查
@@ -18,14 +18,15 @@ description: 在法律业务 Skill 生成正文后、法律文书模板与导出
 ## 触发条件
 
 - 最终产物是本地 `.docx` 的法律文书、报告、清单、笔录、意见书、函件、合同或正式交付文件。
-- 业务 Skill 已生成 `draft.html` 和 `preflight-meta.json`，准备进入 `法律文书模板与导出`。
+- 普通线性文书：业务 Skill 已生成 `draft.html` 和 `preflight-meta.json`，准备进入 `法律文书模板与导出`。
+- 要素式表单文书：业务 Skill 已生成 `complaint-data.json` 和 `fill-plan.json`，准备进入 DOCX 母版克隆填充链路。
 - 用户直接点名业务 Skill 输出 Word 时，也必须先经过本 Skill。
 
 格式测试稿、非正式实验稿可以例外，但必须明确标注不是正式交付。
 
 ## 输入
 
-业务 Skill 必须提供：
+普通线性文书必须提供：
 
 - `draft.html`：语义 HTML，使用 `h1`、`h2`、`h3`、`p`、`section`、`table` 等标签。
 - `preflight-meta.json`：出稿前元数据，使用“声明 + 证据路径”，不得只写布尔值。
@@ -38,6 +39,13 @@ description: 在法律业务 Skill 生成正文后、法律文书模板与导出
   "doc_type": "取保候审申请书",
   "output_purpose": "正式交付",
   "profile": "litigation_standard",
+  "template_selection_path": ".../template-selection.json",
+  "content_template_id": "registered_template_id",
+  "content_template_version": "1.0",
+  "content_template_sha256": "sha256",
+  "profile_id": "litigation_standard",
+  "profile_version": "1.0",
+  "format_standard": "litigation_standard",
   "matter_path": "...",
   "system_record_path": "...",
   "evidence": {
@@ -50,6 +58,12 @@ description: 在法律业务 Skill 生成正文后、法律文书模板与导出
   "known_gaps": []
 }
 ```
+
+要素式表单文书必须提供：
+
+- `complaint-data.json`：结构化字段，字段应有来源或缺口说明。
+- `fill-plan.json`：字段到 DOCX 母版的表格坐标和锚点映射。
+- `qc-meta.json`：模板 ID、事项路径、来源记录、读取复查、法规校验和用户确认记录。
 
 ## 审查命令
 
@@ -68,13 +82,17 @@ python scripts/preflight_check.py \
 - 如正文引用法律、法规、司法解释、案例、裁判规则等内容，必须有法规校验摘要。
 - 如 `required_confirmations` 非空，必须能在用户确认记录中找到对应确认内容。
 - 检查固定身份信息：
-  - 律所：【律师事务所名称】
-  - 律师：【律师姓名】
-  - 地址：【律所地址】
-  - 电话：【联系电话】
-  - 邮箱：【电子邮箱】
+  - 律所：广东广和（长春）律师事务所
+  - 律师：潘睿
+  - 地址：净月区华荣泰七栋608室
+  - 电话：18686488305
+  - 邮箱：418869057@qq.com
 - 检查 HTML 结构至少包含标题和正文；含表格时必须保留为真实 `table`。
 - 检查 `profile` 是否能匹配 `法律文书模板与导出/assets/profiles/` 中的 profile；未命中时使用 `fallback_desktop_word`。
+- 如 `preflight-meta.json` 记录了 `template_selection_path` 或 `content_template_id`，必须核验模板选择记录、模板版本、模板 sha256、profile 版本和兼容 profile；未登记模板、sha256 不一致、profile 不兼容或解除委托协议误用 `entrustment_contract` 时，必须阻断。
+- 要素式表单文书检查模板 ID 是否命中 `template-clone-manifest.json`。
+- 检查 `fill-plan.json` 中每个字段是否有唯一表格坐标和锚点；重复锚点不得只用全局文本定位。
+- 检查字段缺口、金额、日期、主体、诉请和落款是否已确认；未确认字段不得写入正式字段。
 
 ## 自动修正边界
 

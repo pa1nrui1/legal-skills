@@ -1,0 +1,54 @@
+{
+  "version": "1.0",
+  "description": "全局正式法律模板索引。模板文件仍由各业务 Skill 或外部模板库持有，本表只登记版本、匹配边界和兼容导出 profile。",
+  "templates": [
+    {
+      "template_id": "contract_termination_entrustment_lawyer_client_v1",
+      "version": "1.0",
+      "owner_skill": "合同起草",
+      "source_type": "external_docx_template",
+      "source_path": "${LEGAL_CONTRACT_TEMPLATE_ROOT}/21.解除委托协议（律师事务所与客户）.docx",
+      "sha256": "121f7c89fe2e338b2338aa44f4514d5d42ece5cb303db9a18a0e7ccd53a1c596",
+      "doc_types": ["解除委托协议", "解除委托合同", "终止委托协议"],
+      "business_scenes": ["解除委托", "终止委托", "撤诉解除委托"],
+      "keywords": ["解除委托", "终止委托", "撤诉", "律师事务所", "客户"],
+      "exclude_keywords": ["委托代理合同", "授权委托书", "风险义务告知书", "服务质量监督卡"],
+      "default_profile": "contract_standard",
+      "compatible_profiles": ["contract_standard", "fallback_desktop_word"],
+      "profile_versions": {"contract_standard": "1.0", "fallback_desktop_word": "1.0"},
+      "format_standard": "contract_standard"
+    },
+    {
+      "template_id": "entrustment_contract_format_v1",
+      "version": "1.0",
+      "owner_skill": "委托合同管理",
+      "source_type": "format_reference",
+      "source_path": "委托合同管理/references/委托代理合同排版规范.md",
+      "sha256": "8eb077333e83b157a515f930afebc066bafe3d0d06fcaae2f328a5c4b85ea636",
+      "doc_types": ["委托代理合同"],
+      "business_scenes": ["签订委托代理合同", "案件委托手续"],
+      "keywords": ["委托代理合同", "律师费", "代理权限", "承办律师"],
+      "exclude_keywords": ["解除委托", "终止委托", "撤诉", "补充协议"],
+      "default_profile": "entrustment_contract",
+      "compatible_profiles": ["entrustment_contract"],
+      "profile_versions": {"entrustment_contract": "1.0"},
+      "format_standard": "entrustment_contract"
+    },
+    {
+      "template_id": "independent_contract_standard_v1",
+      "version": "1.0",
+      "owner_skill": "合同起草",
+      "source_type": "format_reference",
+      "source_path": "合同起草/references/条款规范与语言标准.md",
+      "sha256": "51ec8282fd82b9186b2780210a0fd1f37c8e68cb4f782e088afabd6b35824139",
+      "doc_types": ["通用合同", "补充协议", "解除协议", "终止协议"],
+      "business_scenes": ["无专用模板合同起草", "合同配套文本", "通用合同正式文本"],
+      "keywords": ["合同", "协议", "补充", "解除", "终止"],
+      "exclude_keywords": ["起诉状", "答辩状", "证据目录", "授权委托书"],
+      "default_profile": "contract_standard",
+      "compatible_profiles": ["contract_standard", "fallback_desktop_word"],
+      "profile_versions": {"contract_standard": "1.0", "fallback_desktop_word": "1.0"},
+      "format_standard": "contract_standard"
+    }
+  ]
+}

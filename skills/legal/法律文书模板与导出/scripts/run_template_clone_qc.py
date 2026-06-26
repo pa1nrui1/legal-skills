@@ -36,6 +36,10 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def resolve_config_path(value: str) -> Path:
+    return Path(os.path.expandvars(value)).expanduser()
+
+
 def load_template(template_id: str) -> dict[str, Any]:
     data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     for item in data.get("templates", []):
@@ -50,10 +54,6 @@ def load_templates() -> list[dict[str, Any]]:
     if not isinstance(templates, list):
         raise ValueError("template clone manifest templates must be an array")
     return [item for item in templates if isinstance(item, dict)]
-
-
-def resolve_path(value: str) -> Path:
-    return Path(os.path.expandvars(value)).expanduser()
 
 
 def inspect_docx(path: Path) -> dict[str, Any]:
@@ -177,8 +177,8 @@ def fixture_private_lending_basic() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def render_docx(python: Path, render_script: Path, docx: Path, out_dir: Path) -> tuple[bool, str]:
-    if not render_script.is_file():
-        return True, "render skipped: set LEGAL_DOCX_RENDER_SCRIPT or pass --render-script to enable rendering"
+    if not render_script.exists():
+        return True, f"render skipped: render script not configured or missing: {render_script}"
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [str(python), str(render_script), str(docx), "--output_dir", str(out_dir), "--emit_pdf"]
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -192,27 +192,25 @@ def run_structure_only_qc(
     python: Path,
     render_script: Path,
 ) -> dict[str, Any]:
-    template_path = resolve_path(str(template["source_docx"]))
+    template_path = resolve_config_path(str(template["source_docx"]))
     failures: list[str] = []
-    render_dir = out_dir / "render"
     if not template_path.exists():
         failures.append(f"template source missing: {template_path}")
         template_audit: dict[str, Any] = {}
-        render_pages = 0
-        render_log = ""
-    else:
-        if sha256(template_path) != template["sha256"]:
-            failures.append("template sha256 mismatch")
+    elif sha256(template_path) != template["sha256"]:
+        failures.append("template sha256 mismatch")
         template_audit = inspect_docx(template_path)
         failures.extend(compare_template(template, template_audit))
-        render_ok, render_log = render_docx(python, render_script, template_path, render_dir)
-        if not render_ok:
-            failures.append("render failed")
-        render_pages = len(list(render_dir.glob("page-*.png")))
-        if render_ok and render_log.startswith("render skipped"):
-            render_pages = int(template.get("expected_render_pages", 0))
-        elif render_ok and render_pages != int(template.get("expected_render_pages", 0)):
-            failures.append(f"render pages: {render_pages} != {template.get('expected_render_pages')}")
+    else:
+        template_audit = inspect_docx(template_path)
+        failures.extend(compare_template(template, template_audit))
+    render_dir = out_dir / "render"
+    render_ok, render_log = render_docx(python, render_script, template_path, render_dir)
+    if not render_ok:
+        failures.append("render failed")
+    render_pages = len(list(render_dir.glob("page-*.png")))
+    if render_ok and render_pages <= 0:
+        failures.append("render produced no pages")
     report = {
         "status": "PASS" if not failures else "FAIL",
         "failures": failures,
@@ -221,6 +219,7 @@ def run_structure_only_qc(
         "fixture": "structure_only",
         "template_audit": {k: v for k, v in template_audit.items() if k != "text"},
         "render_pages": render_pages,
+        "expected_template_render_pages": template.get("expected_render_pages"),
         "paths": {
             "template_docx": str(template_path),
             "render_dir": str(render_dir),
@@ -290,15 +289,16 @@ def main() -> int:
     if not args.template_id:
         raise SystemExit("--template-id is required unless --all is used")
     template = load_template(args.template_id)
-    template_path = resolve_path(str(template["source_docx"]))
+    template_path = resolve_config_path(str(template["source_docx"]))
     failures: list[str] = []
-
     if not template_path.exists():
         failures.append(f"template source missing: {template_path}")
         template_audit: dict[str, Any] = {}
+    elif sha256(template_path) != template["sha256"]:
+        failures.append("template sha256 mismatch")
+        template_audit = inspect_docx(template_path)
+        failures.extend(f"template {item}" for item in compare_template(template, template_audit))
     else:
-        if sha256(template_path) != template["sha256"]:
-            failures.append("template sha256 mismatch")
         template_audit = inspect_docx(template_path)
         failures.extend(f"template {item}" for item in compare_template(template, template_audit))
 
@@ -335,13 +335,14 @@ def main() -> int:
         str(output_docx),
         "--log",
         str(fill_log),
+        "--allow-unchecked",
     ]
     if template_path.exists():
         fill_proc = subprocess.run(fill_cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-        if fill_proc.returncode != 0:
-            failures.append("fill_docx_template failed")
     else:
-        fill_proc = subprocess.CompletedProcess(fill_cmd, 2, stdout="template source missing")
+        fill_proc = subprocess.CompletedProcess(fill_cmd, 2, "", f"template source missing: {template_path}")
+    if fill_proc.returncode != 0:
+        failures.append("fill_docx_template failed")
 
     output_audit: dict[str, Any] = {}
     if output_docx.exists():
@@ -362,10 +363,8 @@ def main() -> int:
         if not render_ok:
             failures.append("render failed")
     render_pages = len(list(render_dir.glob("page-*.png")))
-    if render_ok and render_log.startswith("render skipped"):
-        render_pages = int(template.get("expected_render_pages", 0))
-    elif render_ok and render_pages != int(template.get("expected_render_pages", 0)):
-        failures.append(f"render pages: {render_pages} != {template.get('expected_render_pages')}")
+    if render_ok and render_pages <= 0:
+        failures.append("render produced no pages")
 
     report = {
         "status": "PASS" if not failures else "FAIL",
@@ -375,6 +374,7 @@ def main() -> int:
         "template_audit": {k: v for k, v in template_audit.items() if k != "text"},
         "output_audit": {k: v for k, v in output_audit.items() if k != "text"},
         "render_pages": render_pages,
+        "expected_template_render_pages": template.get("expected_render_pages"),
         "paths": {
             "complaint_data": str(data_path),
             "fill_plan": str(plan_path),

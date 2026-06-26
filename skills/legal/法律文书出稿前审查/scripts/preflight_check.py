@@ -22,16 +22,19 @@ EXPORT_SKILL_DIR = LEGAL_DIR / "法律文书模板与导出"
 PROFILES_DIR = EXPORT_SKILL_DIR / "assets" / "profiles"
 MATTER_ROOT = Path(os.environ.get("LEGAL_WORKSPACE", ".")).expanduser()
 SYSTEM_RECORD_ROOT = MATTER_ROOT / "_系统记录"
-CURRENT_MATTER_PATH = SYSTEM_RECORD_ROOT / "当前事项.md"
+CURRENT_MATTER_PATH = Path(os.environ.get("LEGAL_CURRENT_MATTER", str(SYSTEM_RECORD_ROOT / "当前事项.md"))).expanduser()
 CLONE_MANIFEST_PATH = Path(
     os.environ.get("LEGAL_TEMPLATE_CLONE_MANIFEST", str(EXPORT_SKILL_DIR / "assets" / "template-clone-manifest.json"))
 ).expanduser()
+LEGAL_TEMPLATE_REGISTRY_PATH = Path(
+    os.environ.get("LEGAL_TEMPLATE_REGISTRY", str(EXPORT_SKILL_DIR / "assets" / "legal-template-registry.json"))
+).expanduser()
 FIXED_IDENTITY = {
-    "律所": os.environ.get("LEGAL_FIRM_NAME", "【律师事务所名称】"),
-    "律师": os.environ.get("LEGAL_LAWYER_NAME", "【律师姓名】"),
-    "地址": os.environ.get("LEGAL_FIRM_ADDRESS", "【律所地址】"),
-    "电话": os.environ.get("LEGAL_LAWYER_PHONE", "【联系电话】"),
-    "邮箱": os.environ.get("LEGAL_LAWYER_EMAIL", "【电子邮箱】"),
+    "律所": "广东广和（长春）律师事务所",
+    "律师": "潘睿",
+    "地址": "净月区华荣泰七栋608室",
+    "电话": "18686488305",
+    "邮箱": "418869057@qq.com",
 }
 OLD_CONTACT_PATTERNS = [
     re.compile(r"1[3-9]\d{9}"),
@@ -40,9 +43,12 @@ OLD_CONTACT_PATTERNS = [
 LEGAL_CITATION_RE = re.compile(
     r"《[^》]{2,40}(法|条例|规定|解释|规则|办法|典|决定|纪要)》|"
     r"第[一二三四五六七八九十百千万零\d]+条|"
-    r"指导性案例|入库案例|公报案例|司法解释|法释〔|法发〔"
+    r"指导性案例|入库案例|公报案例|案例|裁判规则|类案检索|案号[:：]?|司法解释|法释〔|法发〔"
 )
 BODY_RE = re.compile(r"<body\b[^>]*>(.*?)</body>", re.I | re.S)
+OCR_UNCERTAIN_MARKERS = ["OCR待确认", "OCR识别不确定", "OCR不可用", "OCR未识别到可用文字", "[OCR待确认]"]
+SOURCE_BOUNDARY_MARKERS = ["已核验", "未核验", "缺口", "输出边界"]
+LEGAL_UNVERIFIED_MARKERS = ["未完成核验", "未核验", "不得用模型记忆", "待核验"]
 
 
 @dataclass
@@ -113,6 +119,10 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def has_unresolved_env(value: str) -> bool:
+    return "$" in value and os.path.expandvars(value) == value
+
+
 def load_clone_template(template_id: str) -> dict[str, Any] | None:
     if not CLONE_MANIFEST_PATH.exists():
         return None
@@ -120,6 +130,23 @@ def load_clone_template(template_id: str) -> dict[str, Any] | None:
     for item in data.get("templates", []):
         if isinstance(item, dict) and item.get("template_id") == template_id:
             return item
+    return None
+
+
+def load_legal_template_registry() -> dict[str, Any]:
+    if not LEGAL_TEMPLATE_REGISTRY_PATH.exists():
+        raise FileNotFoundError(f"legal-template-registry.json 不存在：{LEGAL_TEMPLATE_REGISTRY_PATH}")
+    data = load_json(LEGAL_TEMPLATE_REGISTRY_PATH)
+    if not isinstance(data.get("templates"), list):
+        raise ValueError("legal-template-registry.json 缺少 templates 数组")
+    return data
+
+
+def find_registered_template(template_id: str) -> dict[str, Any] | None:
+    registry = load_legal_template_registry()
+    for template in registry.get("templates", []):
+        if isinstance(template, dict) and template.get("template_id") == template_id:
+            return template
     return None
 
 
@@ -133,7 +160,12 @@ def parse_html(text: str) -> HtmlFacts:
 def normalize_path(value: Any) -> Path | None:
     if not isinstance(value, str) or not value.strip():
         return None
-    return Path(os.path.expandvars(value)).expanduser()
+    path = Path(os.path.expandvars(value)).expanduser()
+    if path.is_absolute():
+        return path
+    if path.parts and path.parts[0] in {LEGAL_DIR.name, "skills"}:
+        return LEGAL_DIR.parents[1] / path
+    return LEGAL_DIR / path
 
 
 def existing_text(path: Path | None) -> str:
@@ -202,22 +234,52 @@ def fix_identity(html_text: str) -> tuple[str, list[str]]:
     lawyer_line = f"律师：{lawyer}"
     if firm not in fixed and lawyer_line in fixed:
         fixed = fixed.replace(lawyer_line, f"{firm}\n{lawyer_line}")
-        changes.append("补入律所名称")
+        changes.append("补入固定律所名称")
     if lawyer not in fixed:
         fixed = fixed.replace("</body>", f"<p class=\"signature\">{lawyer_line}</p>\n</body>")
-        changes.append("补入律师姓名")
+        changes.append("补入固定律师姓名")
     fixed_lines: list[str] = []
-    identity_markers = [lawyer, "律师", "律所", firm, "电话", "邮箱"]
+    identity_markers = ["潘睿", "律师", "律师事务所", "律所", "广东广和", "电话", "邮箱"]
     for line in fixed.splitlines():
         new_line = line
         if any(marker in line for marker in identity_markers):
-            for pattern in OLD_CONTACT_PATTERNS:
-                for match in list(pattern.finditer(new_line)):
-                    value = match.group(0)
-                    replacement = FIXED_IDENTITY["电话"] if "@" not in value else FIXED_IDENTITY["邮箱"]
-                    if value != replacement:
-                        new_line = new_line.replace(value, replacement)
-                        changes.append(f"替换固定联系方式：{value} -> {replacement}")
+            if "律师事务所" in new_line and FIXED_IDENTITY["律所"] not in new_line:
+                replaced = re.sub(
+                    r"[\u4e00-\u9fa5（）()A-Za-z0-9·、]{2,60}律师事务所",
+                    FIXED_IDENTITY["律所"],
+                    new_line,
+                )
+                if replaced != new_line:
+                    new_line = replaced
+                    changes.append("替换固定律所名称")
+            if "律师" in new_line and f"律师：{FIXED_IDENTITY['律师']}" not in new_line:
+                replaced = re.sub(
+                    r"律师[：:]\s*[\u4e00-\u9fa5A-Za-z·]{2,12}",
+                    f"律师：{FIXED_IDENTITY['律师']}",
+                    new_line,
+                )
+                if replaced != new_line:
+                    new_line = replaced
+                    changes.append("替换固定律师姓名")
+            can_fix_law_firm_address = "乙方地址" in new_line or "律所地址" in new_line or firm in new_line and "地址" in new_line
+            if can_fix_law_firm_address and FIXED_IDENTITY["地址"] not in new_line:
+                replaced = re.sub(
+                    r"(地址[：:]\s*)(.*?)(?=(?:电话|邮箱|律师|律所|</|$))",
+                    rf"\1{FIXED_IDENTITY['地址']} ",
+                    new_line,
+                )
+                if replaced != new_line:
+                    new_line = replaced
+                    changes.append("替换固定律所地址")
+            can_fix_law_firm_contact = any(marker in new_line for marker in [firm[:4], "律师事务所", "律所", "乙方", "承办律师"])
+            if can_fix_law_firm_contact:
+                for pattern in OLD_CONTACT_PATTERNS:
+                    for match in list(pattern.finditer(new_line)):
+                        value = match.group(0)
+                        replacement = FIXED_IDENTITY["电话"] if "@" not in value else FIXED_IDENTITY["邮箱"]
+                        if value != replacement:
+                            new_line = new_line.replace(value, replacement)
+                            changes.append(f"替换固定联系方式：{value} -> {replacement}")
         fixed_lines.append(new_line)
     fixed = "\n".join(fixed_lines)
     return fixed, changes
@@ -302,6 +364,123 @@ def validate_doc_template_requirements(meta: dict[str, Any], facts: HtmlFacts, i
             "business",
             "证据目录缺少模板要求的分组段落结构：" + "、".join(missing),
         )
+
+
+def validate_registered_template_selection(meta: dict[str, Any], issues: dict[str, list[str]]) -> None:
+    """Validate the global content-template registry when a formal template selection is declared."""
+    selection_path = normalize_path(meta.get("template_selection_path"))
+    declared_template_id = str(meta.get("content_template_id") or "")
+    declared_profile_id = str(meta.get("profile_id") or meta.get("profile") or "")
+    if not selection_path and not declared_template_id:
+        return
+
+    selection: dict[str, Any] = {}
+    if selection_path:
+        if not selection_path.exists():
+            append_issue(issues, "business", f"template_selection_path 文件不存在：{selection_path}")
+            return
+        try:
+            selection = load_json(selection_path)
+        except Exception as exc:
+            append_issue(issues, "business", f"template_selection_path 无法解析：{exc}")
+            return
+        if selection.get("selection_status") == "ROUTE_TO_TEMPLATE_CLONE":
+            append_issue(issues, "business", "模板选择结果要求走 DOCX 母版克隆链路，不得进入普通 HTML 导出")
+            return
+        if selection.get("selection_status") != "PASS":
+            append_issue(issues, "business", f"模板选择记录未通过：{selection.get('selection_status')}")
+        selection_type = str(selection.get("selection_type") or "")
+        if selection_type in {"format_reference", "profile_fallback"} and not declared_template_id:
+            selected_profile = str(selection.get("profile_id") or "")
+            selected_profile_version = str(selection.get("profile_version") or "")
+            format_standard = str(selection.get("format_standard") or "")
+            if declared_profile_id and selected_profile and declared_profile_id != selected_profile:
+                append_issue(issues, "business", f"profile {declared_profile_id} 不匹配模板选择 profile {selected_profile}")
+            if meta.get("profile_version") and selected_profile_version and str(meta.get("profile_version")) != selected_profile_version:
+                append_issue(issues, "business", f"profile 版本不一致：{meta.get('profile_version')} != {selected_profile_version}")
+            if meta.get("format_standard") and format_standard and str(meta.get("format_standard")) != format_standard:
+                append_issue(issues, "business", f"format_standard 不一致：{meta.get('format_standard')} != {format_standard}")
+            return
+
+    template_id = declared_template_id or str(selection.get("content_template_id") or "")
+    if not template_id:
+        append_issue(issues, "business", "正式模板链路缺少 content_template_id")
+        return
+    try:
+        template = find_registered_template(template_id)
+    except Exception as exc:
+        append_issue(issues, "business", f"无法读取全局模板注册表：{exc}")
+        return
+    if not template:
+        append_issue(issues, "business", f"content_template_id 未命中 legal-template-registry.json：{template_id}")
+        return
+
+    for key in ["content_template_version", "content_template_sha256", "profile_id", "profile_version"]:
+        value = meta.get(key) or selection.get(key)
+        if not value:
+            append_issue(issues, "business", f"正式模板链路缺少字段：{key}")
+
+    expected_version = str(template.get("version") or "")
+    actual_version = str(meta.get("content_template_version") or selection.get("content_template_version") or "")
+    if expected_version and actual_version and actual_version != expected_version:
+        append_issue(issues, "business", f"模板版本不一致：{actual_version} != {expected_version}")
+
+    source_value = str(template.get("source_path") or "")
+    source_path = normalize_path(source_value)
+    if not source_path or not source_path.exists():
+        if not has_unresolved_env(source_value):
+            append_issue(issues, "material", f"注册模板源文件不存在：{source_path}")
+    else:
+        expected_sha = str(template.get("sha256") or "")
+        actual_sha = sha256(source_path)
+        declared_sha = str(meta.get("content_template_sha256") or selection.get("content_template_sha256") or "")
+        if expected_sha and actual_sha != expected_sha:
+            append_issue(issues, "business", f"注册模板源文件 sha256 不匹配：{template_id}")
+        if expected_sha and declared_sha and declared_sha != expected_sha:
+            append_issue(issues, "business", f"preflight-meta 模板 sha256 不一致：{declared_sha} != {expected_sha}")
+
+    profile_id = declared_profile_id or str(selection.get("profile_id") or "")
+    compatible_profiles = [str(item) for item in template.get("compatible_profiles", [])]
+    if profile_id and profile_id not in compatible_profiles:
+        append_issue(issues, "business", f"profile {profile_id} 不兼容模板 {template_id}")
+
+    expected_profile_version = str((template.get("profile_versions") or {}).get(profile_id) or "")
+    actual_profile_version = str(meta.get("profile_version") or selection.get("profile_version") or "")
+    if expected_profile_version and actual_profile_version and actual_profile_version != expected_profile_version:
+        append_issue(issues, "business", f"profile 版本不一致：{actual_profile_version} != {expected_profile_version}")
+
+    format_standard = str(meta.get("format_standard") or selection.get("format_standard") or "")
+    expected_format_standard = str(template.get("format_standard") or "")
+    if expected_format_standard and format_standard and format_standard != expected_format_standard:
+        append_issue(issues, "business", f"format_standard 不一致：{format_standard} != {expected_format_standard}")
+
+
+def validate_reading_review_text(text: str, issues: dict[str, list[str]]) -> None:
+    if not text:
+        return
+    if "读取复查摘要" not in text and "文件读取复查摘要" not in text:
+        append_issue(issues, "material", "读取复查摘要文件未包含【读取复查摘要】标记")
+    uncertain = [marker for marker in OCR_UNCERTAIN_MARKERS if marker in text]
+    if uncertain:
+        append_issue(issues, "material", "读取复查摘要存在 OCR 存疑，需先复核确认：" + "、".join(uncertain))
+
+
+def validate_source_boundary_text(text: str, issues: dict[str, list[str]]) -> None:
+    if not text:
+        return
+    missing = [marker for marker in SOURCE_BOUNDARY_MARKERS if marker not in text]
+    if missing:
+        append_issue(issues, "business", "来源边界记录缺少必要栏目：" + "、".join(missing))
+
+
+def validate_legal_verification_text(text: str, issues: dict[str, list[str]]) -> None:
+    if not text:
+        return
+    if not any(mark in text for mark in ["法规校验摘要", "现行有效", "已核验", "法宝", "官方"]):
+        append_issue(issues, "business", "法规校验摘要内容未体现法规核验状态")
+    unverified = [marker for marker in LEGAL_UNVERIFIED_MARKERS if marker in text]
+    if unverified:
+        append_issue(issues, "material", "法规校验摘要存在未完成核验事项：" + "、".join(unverified))
 
 
 def choose_status(
@@ -418,6 +597,7 @@ def check(args: argparse.Namespace) -> int:
     if "p" not in facts.tags:
         append_issue(issues, "business", "draft.html 缺少 p 正文段落")
     validate_doc_template_requirements(meta, facts, issues)
+    validate_registered_template_selection(meta, issues)
 
     profile = str(meta.get("profile") or "fallback_desktop_word")
     if not (PROFILES_DIR / f"{profile}.json").exists():
@@ -451,14 +631,11 @@ def check(args: argparse.Namespace) -> int:
                 evidence_required.append(str(path))
 
     reading_text = evidence_texts.get("reading_review_path", "")
-    if reading_text and "读取复查摘要" not in reading_text:
-        append_issue(issues, "material", "读取复查摘要文件未包含【读取复查摘要】标记")
+    validate_reading_review_text(reading_text, issues)
     boundary_text = evidence_texts.get("source_boundary_path", "")
-    if boundary_text and not any(mark in boundary_text for mark in ["来源", "边界", "未核验", "已核验"]):
-        append_issue(issues, "business", "来源边界记录内容未体现来源边界或核验状态")
+    validate_source_boundary_text(boundary_text, issues)
     legal_text = evidence_texts.get("legal_verification_path", "")
-    if legal_text and not any(mark in legal_text for mark in ["法规校验摘要", "现行有效", "已核验", "法宝", "官方"]):
-        append_issue(issues, "business", "法规校验摘要内容未体现法规核验状态")
+    validate_legal_verification_text(legal_text, issues)
 
     confirmation_text = evidence_texts.get("user_confirmation_source", "")
     if not isinstance(required_confirmations, list):
@@ -520,12 +697,12 @@ def validate_clone_evidence(qc_meta: dict[str, Any], issues: dict[str, list[str]
         elif not text.strip():
             append_issue(issues, "material", f"{label}文件为空或不可读：{path}")
             evidence_required.append(str(path))
-        elif key == "reading_review_path" and "读取复查摘要" not in text:
-            append_issue(issues, "material", "读取复查摘要文件未包含【读取复查摘要】标记")
-        elif key == "source_boundary_path" and not any(mark in text for mark in ["来源", "边界", "未核验", "已核验"]):
-            append_issue(issues, "business", "来源边界记录内容未体现来源边界或核验状态")
-        elif key == "legal_verification_path" and not any(mark in text for mark in ["法规校验摘要", "现行有效", "已核验", "法宝", "官方"]):
-            append_issue(issues, "business", "法规校验摘要内容未体现法规核验状态")
+        elif key == "reading_review_path":
+            validate_reading_review_text(text, issues)
+        elif key == "source_boundary_path":
+            validate_source_boundary_text(text, issues)
+        elif key == "legal_verification_path":
+            validate_legal_verification_text(text, issues)
 
 
 def validate_clone_field_sources(
@@ -643,9 +820,11 @@ def check_clone(args: argparse.Namespace) -> int:
         if not template:
             append_issue(issues, "business", f"template_id 未命中 template-clone-manifest.json：{template_id}")
         else:
-            source_docx = Path(os.path.expandvars(str(template.get("source_docx") or ""))).expanduser()
-            if not source_docx.exists():
-                append_issue(issues, "material", f"DOCX 母版不存在：{source_docx}")
+            source_value = str(template.get("source_docx") or "")
+            source_docx = normalize_path(source_value)
+            if not source_docx or not source_docx.exists():
+                if not has_unresolved_env(source_value):
+                    append_issue(issues, "material", f"DOCX 母版不存在：{source_docx}")
             elif template.get("sha256") and sha256(source_docx) != template.get("sha256"):
                 append_issue(issues, "business", f"DOCX 母版 sha256 不匹配：{template_id}")
             if template.get("doc_type") != "民事起诉状":

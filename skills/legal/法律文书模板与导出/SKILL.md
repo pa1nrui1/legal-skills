@@ -58,8 +58,25 @@ description: 统一处理法律工作中最终需要输出本地 Word（.docx）
 - `entrustment_statement_record`：委托合同管理-委托人陈述笔录/案件沟通记录。
 - `entrustment_supervision_card`：委托合同管理-服务质量监督卡。
 - `legal_representative_certificate`：委托合同管理-法定代表人身份证明书。
+- `contract_standard`：解除协议、补充协议、终止协议、无专门排版规范的合同正式文本。
 - `litigation_visualization`：诉讼可视化图表嵌入 Word。
 - `fallback_desktop_word`：无专用模板时的兜底桌面 Word。
+
+## 模板匹配与版本门禁
+
+全局模板登记表位于 `assets/legal-template-registry.json`，只做索引和门禁，不迁移各业务 Skill 的正文模板或外部模板文件。正式合同类 Word 如存在内容模板来源，应先生成 `template-selection.json`：
+
+```bash
+python scripts/select_legal_template.py \
+  --source-skill 合同起草 \
+  --doc-type 解除委托协议 \
+  --business-scene 撤诉解除委托 \
+  --user-request "客户撤诉，费用不退，留存抵扣后续法律服务" \
+  --source-template-path "模板源文件.docx" \
+  --output template-selection.json
+```
+
+选择结果必须写入 `preflight-meta.json`，至少包括 `template_selection_path`、`content_template_id`、`content_template_version`、`content_template_sha256`、`profile_id`、`profile_version` 和 `format_standard`。未命中登记表、模板 sha256 不一致、多候选冲突或 profile 不兼容时，不得进入正式导出。
 
 ## 导出命令
 
@@ -120,6 +137,7 @@ python scripts/run_dual_docx_qc.py --out /tmp/legal_dual_docx_qc
 ```bash
 python scripts/health_check.py
 python scripts/health_check.py --docx output.docx --expect-title "文书标题"
+python scripts/health_check.py --docx output.docx --expect-title "解除委托协议" --format-standard contract_standard
 python scripts/health_check.py --docx output.docx --expect-clean-clone --template-clone-report qc-report.json
 ```
 
@@ -131,11 +149,22 @@ python scripts/health_check.py --docx output.docx --expect-clean-clone --templat
 - `word/document.xml` 存在。
 - 标题文本存在。
 - 页边距配置存在。
+- 指定 `--format-standard contract_standard` 时，反查 DOCX XML 中实际字号、字体和行距；合同正式文本正文和 meta 不得小于小四，行距应为 1.5 倍或固定 24-28 磅。
 - 页码字段存在。
 - 表格生成真实 `w:tbl`。
 - 要素式表单文书的模板克隆 manifest 可解析。
 - 清洁模板填充 DOCX 不含 `w:ins`、`w:del`、`trackRevisions` 或 comments。
 - 模板克隆质控报告状态为 `PASS`。
+
+正式交付包审计：
+
+```bash
+python scripts/audit_formal_delivery.py \
+  --bundle-dir 正式交付目录 \
+  --docx 正式交付文件.docx
+```
+
+正式 `.docx` 不得仅凭“文件已生成”标记完成；同一交付包必须具备 `draft.html`、`preflight-meta.json`、`draft_checked.html`、`出稿前审查报告.md`、最终 `.docx` 和 `health-check-report.txt`。审查报告状态必须为 `PASS` 或 `FIXED_PASS`，健康检查记录必须包含 `health_check_ok: True` 并指向最终 `.docx`。
 
 ## 迁移边界
 

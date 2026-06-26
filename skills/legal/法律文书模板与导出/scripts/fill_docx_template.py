@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +19,9 @@ from lxml import etree
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 NS = {"w": W_NS}
+MATTER_ROOT = Path(os.environ.get("LEGAL_WORKSPACE", ".")).expanduser()
+SYSTEM_RECORD_ROOT = MATTER_ROOT / "_系统记录"
+DRAFT_OUTPUT_NAME_PATTERN = re.compile(r"draft|unchecked|草稿|实验|未审查|未出稿")
 
 
 def qn(local: str) -> str:
@@ -140,6 +145,34 @@ def inspect_cleanliness(document: etree._Element, parts: dict[str, bytes]) -> di
     }
 
 
+def is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def validate_output_path(output_path: Path, allow_unchecked: bool) -> None:
+    resolved = output_path.expanduser().resolve()
+    if resolved.suffix.lower() != ".docx":
+        raise ValueError("DOCX output path must end with .docx")
+
+    if allow_unchecked:
+        if is_relative_to(resolved, MATTER_ROOT):
+            raise ValueError("unchecked DOCX export must not write into formal business area")
+        return
+
+    if ".cache" in resolved.parts:
+        raise ValueError("formal DOCX output must not be under .cache")
+    if is_relative_to(resolved, SYSTEM_RECORD_ROOT):
+        raise ValueError("formal DOCX output must not be under system record root")
+    if not is_relative_to(resolved, MATTER_ROOT):
+        raise ValueError("formal DOCX output must be under business matter root")
+    if DRAFT_OUTPUT_NAME_PATTERN.search(resolved.name.lower()):
+        raise ValueError("formal DOCX filename must not look like draft or experiment")
+
+
 def fill_docx_template(template: Path, plan_path: Path, output: Path, log_path: Path) -> dict[str, Any]:
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     fields = plan.get("fields")
@@ -184,7 +217,9 @@ def main() -> int:
     parser.add_argument("--plan", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--log", required=True, type=Path)
+    parser.add_argument("--allow-unchecked", action="store_true", help="Only for explicit non-deliverable tests.")
     args = parser.parse_args()
+    validate_output_path(args.output, args.allow_unchecked)
     summary = fill_docx_template(args.template, args.plan, args.output, args.log)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0 if summary["failed"] == 0 and not any(summary["cleanliness"].values()) else 2

@@ -5,12 +5,16 @@
 ### Word 正式交付与模板克隆
 
 - 法律工作总控新增正式 `.docx` 双通道规则：普通线性文书继续走 `draft.html`、`preflight-meta.json`、`draft_checked.html`、`html_to_docx.py` 和结构体检；模板登记中的要素式起诉状走 `complaint-data.json`、`fill-plan.json`、DOCX 母版克隆填充、模板克隆质控报告和结构体检。
+- 新增全局内容模板注册表 `legal-template-registry.json` 与模板选择器 `select_legal_template.py`，把合同模板、格式规范、profile 版本、sha256 和路由结果写成可审查记录。
 - `法律文书出稿前审查/scripts/preflight_check.py` 新增要素式起诉状预检入口：支持 `--complaint-data`、`--fill-plan`、`--qc-meta`，检查模板 ID 一致性、母版 manifest、字段来源、表格坐标、锚点模式、读取复查摘要、来源边界记录、法规校验摘要和用户确认记录。
+- 出稿前审查新增模板选择校验：普通 HTML 链路不得接收 `ROUTE_TO_TEMPLATE_CLONE` 结果；注册模板需校验 template id、版本、profile 兼容性、format_standard 和 sha256。
 - `法律文书模板与导出` 新增 DOCX 母版克隆填充链路：`fill_docx_template.py` 按表格坐标和锚点填充，不启用修订痕迹，并清理 `trackRevisions`。
+- 新增 `contract_standard` Word profile，用于普通合同、补充协议、解除协议、终止协议等合同类正式文本的格式门禁。
+- 新增 `audit_formal_delivery.py`，正式 Word 交付包需包含 `draft.html`、`preflight-meta.json`、`draft_checked.html`、`出稿前审查报告.md`、`health-check-report.txt` 和最终 `.docx`。
 - 新增 `run_template_clone_qc.py` 与 `run_dual_docx_qc.py`：分别用于模板克隆质控，以及 HTML 导出链路与模板克隆链路的双通道回归验证。
 - `health_check.py` 新增模板克隆 manifest 检查、清洁 DOCX 检查和 `--template-clone-report` 质控报告校验。
 - 新增 4 个委托合同管理 Word profile：委托代理合同、风险义务告知书、委托人陈述笔录/案件沟通记录、服务质量监督卡，并补充对应排版规范。
-- 开源仓库保留 `${LEGAL_TEMPLATE_ROOT}`、`LEGAL_TEMPLATE_CLONE_MANIFEST`、`LEGAL_DOCX_RENDER_SCRIPT` 等环境变量配置边界，不提交作者本机 DOCX 母版路径或运行时路径。
+- 开源仓库保留 `LEGAL_WORKSPACE`、`LEGAL_CURRENT_MATTER`、`LEGAL_TEMPLATE_REGISTRY`、`${LEGAL_CONTRACT_TEMPLATE_ROOT}`、`${LEGAL_TEMPLATE_ROOT}`、`LEGAL_TEMPLATE_CLONE_MANIFEST`、`LEGAL_QC_PYTHON`、`LEGAL_DOCX_RENDER_SCRIPT` 等环境变量配置边界，不提交作者本机 DOCX 母版路径、业务工作区路径或运行时路径。
 
 ## 2026-06-24
 

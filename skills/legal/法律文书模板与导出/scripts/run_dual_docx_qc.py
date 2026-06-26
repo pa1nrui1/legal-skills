@@ -21,9 +21,6 @@ HTML_EXPORT = SCRIPT_DIR / "html_to_docx.py"
 CLONE_QC = SCRIPT_DIR / "run_template_clone_qc.py"
 HEALTH = SCRIPT_DIR / "health_check.py"
 DEFAULT_PYTHON = Path(os.environ.get("LEGAL_QC_PYTHON", sys.executable)).expanduser()
-CURRENT_MATTER = Path(
-    os.environ.get("LEGAL_CURRENT_MATTER", os.environ.get("LEGAL_WORKSPACE", ".") + "/_系统记录/当前事项.md")
-).expanduser()
 
 
 def load_clone_fixture() -> tuple[dict, dict]:
@@ -35,50 +32,51 @@ def load_clone_fixture() -> tuple[dict, dict]:
     return module.fixture_private_lending_basic()
 
 
-def run(cmd: list[str], *, env: dict[str, str]) -> tuple[int, str]:
+def run(cmd: list[str], env: dict[str, str]) -> tuple[int, str]:
     proc = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
     return proc.returncode, proc.stdout
 
 
-def current_paths(root: Path) -> tuple[Path, str, str]:
-    current_matter = CURRENT_MATTER
-    workspace_value = os.environ.get("LEGAL_WORKSPACE", "")
-    workspace = Path(workspace_value).expanduser() if workspace_value else root / "workspace"
-    if not workspace_value:
-        workspace = root / "workspace"
-        current_matter = workspace / "_系统记录" / "当前事项.md"
+def ensure_test_workspace(root: Path) -> tuple[dict[str, str], str, str]:
+    env = os.environ.copy()
+    matter_root = Path(env.get("LEGAL_WORKSPACE", str(root / "_legal_workspace"))).expanduser().resolve()
+    system_root = matter_root / "_系统记录"
+    current_matter = Path(env.get("LEGAL_CURRENT_MATTER", str(system_root / "当前事项.md"))).expanduser().resolve()
+    matter_path = matter_root / "合成正式事项"
+    system_record_path = system_root / "合成正式事项"
+    matter_path.mkdir(parents=True, exist_ok=True)
+    system_record_path.mkdir(parents=True, exist_ok=True)
+    current_matter.parent.mkdir(parents=True, exist_ok=True)
     if not current_matter.exists():
-        matter_path = workspace / "示例事项"
-        system_record_path = workspace / "_系统记录" / "示例事项"
-        matter_path.mkdir(parents=True, exist_ok=True)
-        system_record_path.mkdir(parents=True, exist_ok=True)
-        current_matter.parent.mkdir(parents=True, exist_ok=True)
         current_matter.write_text(
-            f"# 当前事项\n业务文件路径：{matter_path}\n系统记录路径：{system_record_path}\n",
+            f"业务文件路径：{matter_path}\n系统记录路径：{system_record_path}\n",
             encoding="utf-8",
         )
-        return workspace, str(matter_path), str(system_record_path)
+    env["LEGAL_WORKSPACE"] = str(matter_root)
+    env["LEGAL_CURRENT_MATTER"] = str(current_matter)
+    return env, str(matter_path), str(system_record_path)
 
+
+def current_paths(current_matter: Path) -> tuple[str, str]:
     text = current_matter.read_text(encoding="utf-8", errors="ignore")
     matter = re.search(r"业务文件路径：(.+)", text)
     system = re.search(r"系统记录路径：(.+)", text)
     if not matter or not system:
         raise ValueError("当前事项.md 缺少业务文件路径或系统记录路径")
-    if not workspace_value:
-        workspace = current_matter.parent.parent
-    return workspace, matter.group(1).strip(), system.group(1).strip()
+    return matter.group(1).strip(), system.group(1).strip()
 
 
-def write_html_fixture(root: Path, matter_path: str, system_record_path: str) -> dict[str, Path]:
+def write_html_fixture(root: Path, matter_path: str, system_record_path: str, formal_output_root: Path) -> dict[str, Path]:
     html_dir = root / "html"
     html_dir.mkdir(parents=True, exist_ok=True)
+    formal_output_root.mkdir(parents=True, exist_ok=True)
     reading = html_dir / "reading_review.md"
     boundary = html_dir / "source_boundary.md"
     draft = html_dir / "draft.html"
     meta = html_dir / "preflight-meta.json"
     checked = html_dir / "draft_checked.html"
     report = html_dir / "出稿前审查报告.md"
-    output = html_dir / "html通道测试.docx"
+    output = formal_output_root / "html通道测试.docx"
     reading.write_text(
         "# 读取复查摘要\n文件名：HTML通道测试材料\n读取方式：合成测试\n关键数据提取：测试原告、测试请求、测试日期\n存疑项：无\n完整性评估：可用于导出链路测试\n",
         encoding="utf-8",
@@ -90,7 +88,7 @@ def write_html_fixture(root: Path, matter_path: str, system_record_path: str) ->
     draft.write_text(
         """<!doctype html><html><body><article>
 <h1>民事起诉状</h1>
-<p class=\"meta\">原告：测试原告，联系电话：13800000000。</p>
+<p class=\"meta\">原告：测试原告，联系电话：18686488305。</p>
 <p>诉讼请求：请求被告支付测试款项1000元。</p>
 <p>事实与理由：本段为HTML原通道导出测试正文，不引用法律条文。</p>
 <p class=\"signature\">律师：潘睿</p>
@@ -201,13 +199,11 @@ def main() -> int:
 
     root = args.out.expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
-    workspace, matter_path, system_record_path = current_paths(root)
+    env, matter_path, system_record_path = ensure_test_workspace(root)
     Path(matter_path).mkdir(parents=True, exist_ok=True)
     Path(system_record_path).mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
-    env["LEGAL_WORKSPACE"] = str(workspace)
-    env["LEGAL_CURRENT_MATTER"] = str(workspace / "_系统记录" / "当前事项.md")
-    html = write_html_fixture(root, matter_path, system_record_path)
+    formal_output_root = Path(matter_path) / "_SkillOpt合成Word回归" / root.name / "html"
+    html = write_html_fixture(root, matter_path, system_record_path, formal_output_root)
     clone_preflight = write_clone_preflight_fixture(root, matter_path, system_record_path)
     clone_dir = root / "clone"
 
@@ -282,6 +278,12 @@ def main() -> int:
                 "--expect-title",
                 "民事起诉状",
                 "--expect-table",
+                "--expect-text",
+                "诉讼请求：请求被告支付测试款项1000元。",
+                "--expect-text",
+                "事实与理由：本段为HTML原通道导出测试正文，不引用法律条文。",
+                "--expect-text",
+                "潘睿",
             ],
         ),
         (
@@ -292,6 +294,14 @@ def main() -> int:
                 "--docx",
                 str(clone_dir / "民间借贷纠纷民事起诉状-模板克隆填充.docx"),
                 "--expect-clean-clone",
+                "--expect-text",
+                "姓名：张三",
+                "--expect-text",
+                "尚欠本金100000元",
+                "--expect-text",
+                "欠利息5000元",
+                "--expect-text",
+                "105000元",
                 "--template-clone-report",
                 str(clone_dir / "qc-report.json"),
             ],
@@ -299,7 +309,7 @@ def main() -> int:
     ]
     status = "PASS"
     for name, cmd in commands:
-        code, output = run(cmd, env=env)
+        code, output = run(cmd, env)
         steps.append({"name": name, "returncode": code, "output": output})
         if code != 0:
             status = "FAIL"
