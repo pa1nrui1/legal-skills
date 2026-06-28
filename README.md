@@ -20,6 +20,8 @@
 
 **潘睿律师** - 热衷于将 AI 技术应用于法律实务。
 
+个人官网：https://www.panrui.xyz/
+
 欢迎添加微信交流（请注明来意）：
 
 <div align="center">
@@ -29,6 +31,8 @@
 ## 关于项目
 
 **Legal Skills** 是一套开源的中文法律工作 Skill 集合。它不是“万能法律提示词”，而是把真实法律服务中容易被模型忽略的流程、校验、分工和交付边界，拆解为可由 AI Agent 执行和复核的工作单元。
+
+项目页：https://www.panrui.xyz/projects/legal-skills/
 
 Agent 在本项目中不会被鼓励直接给出结论，而是被要求按法律工作习惯推进：
 
